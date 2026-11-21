@@ -1,0 +1,18 @@
+# 本地环境与生成文件
+.env
+.env.*
+!.env.example
+!.env.*.example
+.venv/
+__pycache__/
+.pytest_cache/
+node_modules/
+*.log
+
+# 仓库根目录的本机配置与运行产物
+/AGENTS.local.md
+/.codex/
+/.local/
+/cache/
+/out/
+/tmp/
