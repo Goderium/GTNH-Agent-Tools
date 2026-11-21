@@ -1,7 +1,11 @@
 # GTNH Agent Tools
 
-收录为本地 Agent 工作流制作的可复用工具，包括独立脚本、命令行程序和数据处理辅助工具。
+供 Agent 离线使用的 GTNH 工具集。
 
-每个工具放在 `tools/<tool-name>/`，其 README 提供安装、调用、输入输出和验证说明。新增或维护工具前，读取 [仓库提示词](AGENTS.md)。
+各工具位于 `tools/` 下，其 README 提供运行依赖、输入输出和调用示例。
 
-当前仓库已初始化，待收录首个工具。
+| 工具 | 用途 | Agent 入口 |
+| --- | --- | --- |
+| [GTNH Tooltip 工作台](tools/tooltip-preview/README.md) | 从 Java 和翻译资源预览 Tooltip，用配方池布局与手填内容生成 NEI HTML，从主机字段和同步 NBT 生成三录仪与 Waila 预览 | [命令行](tools/tooltip-preview/agent.mjs) · [离线 HTML](tools/tooltip-preview/index.html) |
+
+工作台随附源码和合成样例。预览所需的目标模组源码、游戏字体和客户端配置由使用者在请求文件中指定。

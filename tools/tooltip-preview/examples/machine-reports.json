@@ -1,0 +1,151 @@
+{
+  "craft-scanner": {
+    "source": "machine",
+    "java": {
+      "file": "src/main/java/com/Nxer/TwistSpaceTechnology/common/machine/TST_MegaCraftingCenter.java",
+      "method": "getInfoData",
+      "locale": "zh_CN"
+    },
+    "state": {
+      "fields": {
+        "patternDetails": [
+          "电路板",
+          "微处理器",
+          "晶体管",
+          "电感",
+          "二极管",
+          "电容",
+          "电阻",
+          "发光二极管",
+          "光学处理器"
+        ]
+      }
+    }
+  },
+  "matter-scanner": {
+    "source": "machine",
+    "java": {
+      "file": "src/main/java/com/Nxer/TwistSpaceTechnology/system/DysonSphereProgram/machines/TST_StrangeMatterAggregator.java",
+      "method": "getInfoData",
+      "locale": "zh_CN"
+    },
+    "state": {
+      "fields": {
+        "oscillatorTier": 3,
+        "oscillatorPiece": 2,
+        "constraintorTier": 3,
+        "constraintorPiece": 1,
+        "mergerTier": 2,
+        "mergerPiece": 2,
+        "rings": 5,
+        "consecutivePoint": 42
+      }
+    }
+  },
+  "heat-scanner": {
+    "source": "machine",
+    "java": {
+      "file": "src/main/java/com/Nxer/TwistSpaceTechnology/common/machine/TST_SwelegfyrBlastFurnace.java",
+      "method": "getInfoData",
+      "locale": "zh_CN"
+    },
+    "state": {
+      "fields": {
+        "isPassiveMode": true,
+        "inPassiveMode": true,
+        "inRapidHeating": true,
+        "isHoldingHeat": false,
+        "mHeatingCapacity": 5200,
+        "maxHeatingCapacity": 7200,
+        "pendingRapidHeatingStep": 25,
+        "recipeHeatLimitation": 5400
+      },
+      "calls": {
+        "getCoilHeat": 3600,
+        "isActive": true
+      }
+    }
+  },
+  "heat-waila": {
+    "source": "machine",
+    "java": {
+      "file": "src/main/java/com/Nxer/TwistSpaceTechnology/common/machine/TST_SwelegfyrBlastFurnace.java",
+      "method": "getWailaBody",
+      "locale": "zh_CN"
+    },
+    "state": {
+      "nbt": {
+        "isActive": true,
+        "isPassiveMode": true,
+        "inPassiveMode": true,
+        "inRapidHeating": true,
+        "isHoldingHeat": false,
+        "mHeatingCapacity": 5200,
+        "maxHeatingCapacity": 7200,
+        "coilHeat": 3600,
+        "pendingRapidHeatingStep": 25,
+        "recipeHeatLimitation": 5400,
+        "correctBlazeCost": 40,
+        "machineUpdated": true
+      }
+    }
+  },
+  "heat-cooling": {
+    "source": "machine",
+    "java": {
+      "file": "src/main/java/com/Nxer/TwistSpaceTechnology/common/machine/TST_SwelegfyrBlastFurnace.java",
+      "method": "getWailaBody",
+      "locale": "zh_CN"
+    },
+    "state": {
+      "nbt": {
+        "isActive": true,
+        "isPassiveMode": false,
+        "inPassiveMode": false,
+        "inRapidHeating": false,
+        "isHoldingHeat": false,
+        "mHeatingCapacity": 5200,
+        "maxHeatingCapacity": 7200,
+        "coilHeat": 3600,
+        "pendingRapidHeatingStep": 25,
+        "recipeHeatLimitation": 5400,
+        "correctBlazeCost": 40,
+        "machineUpdated": false
+      }
+    }
+  },
+  "lightning-waila": {
+    "source": "machine",
+    "java": {
+      "file": "src/main/java/com/Nxer/TwistSpaceTechnology/common/machine/TST_BallLightning.java",
+      "method": "getWailaBody",
+      "locale": "zh_CN"
+    },
+    "state": {
+      "nbt": {
+        "modeTST": 2,
+        "isWirelessMode": true,
+        "FusionMaxEut": "524,288",
+        "costingWirelessEU": "1,048,576",
+        "extraEuCostMultiplier": 4
+      }
+    }
+  },
+  "matter-waila": {
+    "source": "machine",
+    "java": {
+      "file": "src/main/java/com/Nxer/TwistSpaceTechnology/system/DysonSphereProgram/machines/TST_StrangeMatterAggregator.java",
+      "method": "getWailaBody",
+      "locale": "zh_CN"
+    },
+    "state": {
+      "nbt": {
+        "isActive": true,
+        "consecutivePoint": 42,
+        "powerConsumption": {
+          "long": "9007199254740993"
+        }
+      }
+    }
+  }
+}
