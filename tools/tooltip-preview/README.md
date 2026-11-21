@@ -1,7 +1,7 @@
 
 # GTNH Tooltip 工作台
 
-供 Agent 从源码、BridgeNH 回执或已解析文本生成 Minecraft 1.7.10 / GTNH 的 Tooltip 预览。入口是离线 HTML 和命令行。命令行驱动同一份 HTML，输出 PNG 和机器可读的布局、分页、缺失字形以及差分回执。
+供 Agent 从源码、BridgeNH 回执或已解析文本生成 Minecraft 1.7.10 / GTNH 的 Tooltip、NEI 配方页和 MUI2 面板预览。命令行驱动离线 HTML 渲染器，输出 PNG 或单文件 HTML，并可生成机器可读的布局与差分回执。
 
 ## 生成流程
 
@@ -11,6 +11,7 @@
 | --- | --- |
 | 物品、多方块和 GUI 文字 | 用 `source=java` 读取说明方法、Builder 或语言资源，检查 `extraction.unresolved`。可用 `requireComplete` 要求所有行可解析。 |
 | NEI 配方页 | 读取配方池和 Frontend 结构，由 HTML 生成格子，再填材料与悬停文字。 |
+| MUI2 面板与绘制 | 用 `source=mui2` 读取面板工厂或 drawable 字段，从方法体、主题注册和同步值生成控件布局、纹理、文字与悬停状态。 |
 | 主机三录仪 | 用 `source=machine` 读取 `getInfoData` 或 `getExtraInfoData`，传入手填主机字段，输出主机自定义纯文本。 |
 | Waila | 用 `source=machine` 读取 `getWailaBody`，传入同步后的 NBT，在 Waila HUD 中绘制所选机器的正文。 |
 | 彩色文字、聊天与已有报告 | 使用已有文字渲染入口保留格式码、字形和布局。已存三录仪物品报告可用 `profile=scanner` 回放。 |
@@ -29,12 +30,13 @@ JSON 文件相对自身目录解析输入路径。可用 --browser 指定 Chromi
 
 ### 批量请求
 
-用 `--batch` 传入清单，一次调用可混合生成 NEI 配方页、物品 Tooltip、三录仪和 Waila 预览。清单中的路径相对于清单，每份请求里的资源路径仍相对于该请求。以下清单会生成一张配方页和一张 Waila 图。
+用 `--batch` 传入清单，一次调用可混合生成 NEI 配方页、MUI2 面板、物品 Tooltip、三录仪和 Waila 预览。清单中的路径相对于清单，每份请求里的资源路径仍相对于该请求。以下清单会生成一张配方页、一张 MUI2 信号面板图和一张 Waila 图。
 
 ```json
 {
   "jobs": [
     { "request": "requests/recipe.json", "out": "recipe.html", "report": "recipe-report.json" },
+    { "request": "examples/mui2-panel.json", "out": "signals.png", "report": "signals-report.json" },
     { "request": "requests/waila.json", "out": "waila.png" }
   ]
 }
@@ -80,6 +82,153 @@ node .\agent.mjs --batch batch.json --report batch-report.json
 可用 java.method 指定 Java 方法。省略时扫描常见 Tooltip 方法。指定 createResetButton 等方法可提取控件中的 tooltipBuilder 或 addLine。同文件的 TST #tr 草稿能提供翻译，当前目标语言的源码注释优先用于预览。提取可解析同一 Java 源目录里显式导入的静态终值字段和 GT Builder 的普通说明。GT 终止分隔线使用 java.gtFinisherStyle，默认沿用 GT 5.09.54.265 的连续线。
 
 结果的 extraction.unresolved 记录无法求值的语句和源码行号。java.requireComplete 为 true 时发现未结项便失败。继承、自动生成的 Shift 结构说明、条件循环、动态 IKey、样板数据和 NBT 可用对应实机状态核对。
+
+### MUI2 面板与绘制
+
+用 `source=mui2` 直接解释面板工厂或 drawable 的 Java 语法树。提供与目标客户端匹配的 MUI2 和模组源码。JDK 解析语法树，浏览器用 WebGL 绘制。逐像素比对时使用硬件图形加速；Angelica 抗锯齿还需要片元导数。随附的信号面板只绘制矩形，可以用 Node.js、Chromium 或 Edge 及支持目标语法的 JDK 独立运行。[请求](examples/mui2-panel.json) · [面板源码](examples/SignalPanel.java)
+
+```powershell
+node .\agent.mjs --request examples/mui2-panel.json --out signals.png --report signals-report.json
+node .\agent.mjs --request examples/mui2-panel.json --out signals.html
+```
+
+完整机器页面从返回 `ModularPanel` 的方法进入。下面的相对路径代表与请求一同准备的源码、JAR 和语言文件。该状态会显示最大并行锁、两个绿色勾选图标，以及格式化为 `4,096` 的输入值。
+
+把外置标题、主面板和侧面弹窗放进同一画布时，外层 `ModularPanel` 可调用 `.invisible()`。这样标题旁和弹窗下方的空白在鼠标经过时也保持透明，里面的页签、按钮和槽位照常接收输入。
+
+```json
+{
+  "source": "mui2",
+  "java": {
+    "file": "src/MTEMultiBlockBaseGui.java",
+    "method": "openPowerControlPanel",
+    "sources": ["src/GTGuiThemes.java", "src/GTGuiTextures.java", "src/GuiTextures.java"]
+  },
+  "theme": { "source": "GTGuiThemes.STANDARD" },
+  "state": {
+    "bindings": {
+      "GregTech.ID": "gregtech",
+      "ModularUI.ID": "modularui2",
+      "multiblock.getTrueParallel": 4096,
+      "multiblock.makesPowerfailEvents": true
+    },
+    "sync": { "maxParallel": 4096, "alwaysMaxParallel": true }
+  },
+  "files": {
+    "resources": ["client/gregtech.jar", "client/modularui2.jar"],
+    "fonts": ["client/minecraft.jar", "client/angelica.jar", "client/gregtech.jar"],
+    "fontConfig": "client/angelica.cfg",
+    "language": ["lang/en_US.lang", "lang/zh_CN.lang"]
+  },
+  "scale": 2
+}
+```
+
+| 请求字段 | 含义 |
+| --- | --- |
+| `java.file`、`java.method`、`java.field` | 用一个方法名或一个字段名选定入口。`java.sources` 列出本次引用的辅助类、父类、主题和纹理声明文件。 |
+| `state.args` | 按 Java 参数顺序传入值，例如示例中的 `[65]`。仅含 `PanelSyncManager`、`ModularPanel` 参数的工厂可省略。 |
+| `state.sync`、`state.bindings` | `sync` 按 Java 注册的同步键提供值。`bindings` 为外部常量和无参 getter 提供运行状态。切换电源面板的两项布尔值并将 `getTrueParallel` 改成 `1234`，即可生成两个红叉和 `1,234`。 |
+| `theme` | 提供 `GTGuiThemes.java` 时默认选择 `GTGuiThemes.STANDARD`。可指定源码声明的派生主题。工具跟随 `parent()`，从纹理的 `.name(...)` 注册匹配实际 builder。原版 MUI2 主题可选 `"source": "vanilla"`，并提供对应版本的 `GuiTextures.java`。可用 `theme.color` 或 `state.bindings["Dyes.GUI_METAL.toInt"]` 指定实例的金属色。 |
+| `files.resources`、`files.fonts` | 从资源 JAR 或 ZIP 读取纹理，从客户端字体和可选 Angelica 配置读取字形。纹理所在的模组 JAR 加到 `resources`。 |
+| `files.language`、`state.language` | 显式列出目标客户端使用的 `.lang` 文件，后项覆盖前项。省略文件列表时从入口 Java 的项目资源查找。可用 `state.language` 覆盖单个键。缺失翻译按游戏行为显示键名。 |
+| `size`、`scale`、`timeMs` | 面板沿用源码中的尺寸。单独绘制一段 drawable 时给出 `size.width`、`size.height`，单位为 GUI 逻辑像素。`scale` 为 1 至 4 的整数，`timeMs` 用于固定基于时钟的动画相位。 |
+
+报告中的 `methods` 给出实际访问的方法，`widgets` 给出控件 ID、类型、逻辑坐标、悬停响应和提示文字。用 `files.reference` 指向同状态的客户端截图，用 `crop` 的 `x`、`y`、`width`、`height` 选取物理像素区域。单项调用使用 `--require-exact`，批量清单中使用 `requireExact: true`。检查 `comparison.checkedPixels`、`differentPixels` 和 `exact`。
+
+面板默认按自身大小导出。要按游戏内屏幕位置测试悬停，可传 `"viewport": {"width": 520, "height": 360, "x": 359, "y": 78}`，其中 `x`、`y` 是面板左上角在屏幕上的逻辑坐标。把报告中的控件 ID 填入 `state.hover`，用 `state.mouse` 的 `x`、`y` 指定鼠标屏幕逻辑坐标，省略时取控件中心。PNG 会画出该状态，周围游戏世界透明。默认 `tooltipRenderer` 为整合包使用的 `chromatic`，关闭 Chromatic 的 MUI2 集成时可选 `mui2` 的原生鼠标邻近布局。
+
+导出的 HTML 可直接移动鼠标。Agent 也可调用 `GTNHMuiScene.hover(id, x, y)` 再等待 `GTNHMuiScene.ready()`，用 `state().tooltipBox` 读取含边框的逻辑坐标，用 `panelPng()` 和 `tooltipPng()` 读取独立图层。调用 `hover(null)` 可返回面板。HTML 内含本次悬停用到的字形和面板资源，可单文件离线使用。
+
+已用 MUI2 2.3.94、GT 5.09.54.265、TST `32e535ab4b` 和 JDK 25 验证。梦魇工业合成中心的样板倍率、熯焱高炉的电源控制、奇异物质聚合器的自动搭建与运行配置在 2×、3× 下逐像素匹配客户端。高炉另验证了 2× 解锁并行、关闭故障事件的状态。四组文字悬停比对了整个外框与字体阴影。瓶中混沌单独核对了四个终端标签、30 个凭证指示灯与三个时刻的动画边缘。绘制样例另含进度条、拉伸、九宫格、平铺、透明混合、四色渐变和圆角。
+
+当前可解释行列布局、文本、按钮、滑块、数字输入框，以及源码中的条件、常用循环和 drawable 回调。未支持的绘制方法、外部运行值、控件构造器和主题声明会报告错误。跨面板子控件定位、同名同参数数量的 Java 重载和自定义 OpenGL 绘制需单独适配。
+
+#### 调节 MUI2 控件
+
+整窗使用一个 Java 入口。把调用到的页面工厂所在文件加入 `java.sources`，工作台沿着源码中的子控件、页控制器和可见条件构建整棵控件树。MUI2 原生 `PagedWidget`、`PageButton` 和 `Controller` 支持初始页、指定页、上一页和下一页。机器自定义页签也可以用鼠标回调写入 `IntSyncValue`，各页的 `setEnabledIf` 跟随该值。返回时保留已改动的子页状态。Agent 可按报告里的 `label`、`control.target` 和 `choice` 定位当前页签。[双页工厂](examples/PagedPanel.java) · [可运行请求](examples/mui2-pages.json)
+
+```powershell
+node .\agent.mjs --request examples/mui2-pages.json --out pages.html --report pages-report.json
+```
+
+一般导出为可独立打开的 HTML。需要嵌入对话时，使用相同入口并设 `"htmlMode": "fragment"`，产物包含同一套源码解释器和鼠标交互。PNG 用于展示指定状态。GUI 依赖服务器库存、NBT 或配方结果时，从 `state.sync`、`state.bindings` 和 `state.slots` 提供快照；空机可用 `"state": {"emptyBoundSlots": true}` 表示未列出的绑定槽皆空。
+
+需要适配特殊运行时对象时，可在 `java.adapters` 按签名指定适配工厂，例如 `{"Machine.makeResult/1":"Snapshot.makeResult/1"}`。目标方法来自同一组输入源码，接受原参数或零个参数，报告的 `methods` 会记录替换关系。支持的同步写入和分页点击可离线重放，无法解释的自定义回调在对应控件上标记 `controlUnavailable`。Agent 可先检查该字段，再判断自己的预览是否覆盖目标操作。实机执行的配方和容器事务使用单独的游戏状态。指定 `"textureQuadMode": "angelica-2.2.43"` 可复现该版本 GUI 纹理的三角形拆分。
+
+先用 `--report` 取得 `widgets[].id` 和 `widgets[].control`。后者给出控件类型、当前值、写入位置，以及源码声明的取值范围、停点或滚轮步长。带数据绑定的数字框、开关、循环按钮、滑块支持调节。普通按钮只有在工具识别完整回调及其同步写入时才提供调节操作。每次操作后，工作台用更新的状态重新执行面板工厂，关联控件、纹理、文字和悬停内容随之刷新。
+
+将 `actions` 加入请求即可从初始状态重放操作，单个请求最多 256 步。做交互验收时可设 `"requireInteractive": true` 并依次打开目标页。遇到可见但无法重放的自定义输入回调，CLI 或 HTML 会报告对应的控件。下例可配合随附滑块面板直接使用。输出 PNG 为末步画面，导出 HTML 后可继续调节。[Java 源码](examples/SliderPanel.java) · [起始请求](examples/mui2-slider.json) · [动作请求](examples/mui2-slider-actions.json)
+
+```json
+{
+  "source": "mui2",
+  "java": { "file": "SliderPanel.java", "method": "create" },
+  "actions": [
+    { "id": "red", "type": "drag", "x": 80, "y": 4 },
+    { "id": "mode", "type": "scroll", "direction": "up" }
+  ],
+  "scale": 3
+}
+```
+
+```powershell
+node .\agent.mjs --request examples/mui2-slider-actions.json --out sliders.html --report sliders-report.json
+```
+
+| 操作 | 请求 |
+| --- | --- |
+| 设值 | `set` 接受 `value`。开关用布尔值，循环按钮用 `control.options` 中的值。滑块取绝对数值。数字框的数值表示绝对值，字符串走输入解析和验证，例如有相对上限的字段接受 `"25%"`。 |
+| 点击与拖动 | `click` 的 `button` 默认 0，1 表示右键反向循环。`drag` 的 `x, y` 是相对滑块左上角的 GUI 逻辑像素。手柄行程、横纵方向、上下界与停点依照源码。 |
+| 滚轮 | `scroll` 的 `direction` 为 `up` 或 `down`。可加 `modifiers: {"ctrl":true,"shift":true,"alt":false}`。数字步进需要焦点，滑块遵循自身滚轮设置。回执的 `consumed` 表示控件是否处理该事件。 |
+| 编辑数字 | `focus` 开始编辑；`edit` 给出整行 `text`，可指定 `anchor`、`caret` 和 `showCaret` 固定选区与光标相位。`commit` 验证、写回并结束编辑；`cancel` 恢复聚焦时的值。长草稿按输入框宽度裁切，可用逻辑像素 `scrollX` 固定水平偏移。 |
+
+报告的 `actions[]` 逐步给出 `before`、`after` 和 `consumed`。`controlState.edit` 保存草稿，`controlState.sync` 和 `bindings` 保存已写回的值。默认在确认或失焦时提交，源码启用 `autoUpdateOnChange` 或聚焦滚轮步进时可即时写回。
+
+数字提交跟随字段声明选择 MUI2 的解析器。例如 `2m` 在 `numbersInt` 中为 2,000,000，在 `numbersDouble` 中为 0.002；`numbersInt` 的 `2s` 为 128。千位分隔符由绘制器添加，直接从显示文字复制时应传入原始数字。内置数值表达式和禁用表达式的字段均有原生 Java 对照。超出 JavaScript 安全整数范围的提交会报错。自定义 Java 验证器和 EvalEx 日期、字符串函数需单独适配。
+
+交互 HTML 自带本次解析的 Java 语法树、字体和纹理，在支持 WebGL 的浏览器离线运行。Agent 可以直接调用以下 API，浏览器也接受鼠标拖动、滚轮、键盘和选区操作。按 Enter 或失焦会提交；Escape 默认提交，按目标客户端配置可设置 `state.escRestoreLastText: true`。截图时可用动作显式锁定光标相位。
+
+```js
+await GTNHMuiScene.ready();
+const receipt = await GTNHMuiScene.act({id: "mode", type: "set", value: 3});
+const current = GTNHMuiScene.state();
+const png = GTNHMuiScene.panelPng();
+await GTNHMuiScene.reset();
+```
+
+验收样例覆盖了熯焱高炉的最大并行锁、故障开关和编辑选区，梦魇工业合成中心的样板倍率及上下界，GT EV 改良唱片机的两条滑块，以及 GT 无线算力输入仓的聚焦滚轮。以上控件均有与实机同状态的 RGBA 对照。
+
+#### MUI2 物品槽与流体槽
+
+布局取自 Java 中的 `ItemSlot`、`FluidSlot`。Agent 用 `state.slots` 按控件 ID 填入当前堆叠或罐体的显示状态。在源文件中用 `.name("tank")` 可固定 ID。槽位注册使用 `.slot(...)`、`.tank(...)` 或 `.syncHandler(...)` 时，为每个已绑定槽提供一项，空槽写为 `{}`。其中可以包含 `new ModularSlot(...)` 和 `new FluidSlotSyncHandler(...)`。数量、纹理和 Tooltip 来自该次请求，不会查询玩家物品栏或客户端容器。
+
+以下片段用于具有 `diamond`、`tank`、`spare` 三个控件 ID 的面板。对应的基础图标来自 Minecraft 1.7.10 客户端 JAR。
+
+```json
+{
+  "state": {
+    "slots": {
+      "diamond": { "resource": "minecraft:items/diamond", "count": 64, "tooltip": ["钻石"] },
+      "tank": {
+        "resource": "minecraft:blocks/water_still",
+        "size": [16, 512], "frame": [0, 0, 16, 16],
+        "amount": 250, "capacity": 1000,
+        "tooltip": ["水", "250 / 1000 L"]
+      },
+      "spare": {}
+    }
+  },
+  "files": { "resources": ["client/minecraft.jar", "client/modularui2.jar", "client/gregtech.jar"] }
+}
+```
+
+- `resource` 解析为 `assets/<namespace>/textures/<path>.png`。`size` 是源图宽高，`frame` 以源图像素指定 `[x, y, width, height]`，适合从动画条带或图集中选择一帧。省略两者时使用整张纹理。`tint` 接受 RGB 或 ARGB 整数。
+- 物品图标按原生位置在左上内移 1 像素后绘制为 16×16。`count` 默认为 1，大于 1 时显示右下方带阴影的数量。木斧单件和 StructureLib 全息投影仪 64 件已用客户端 2×、3× 整槽截图逐像素核对。
+- 有流体时提供正整数 `amount`。默认填满内容区。Java 使用 `.alwaysShowFull(false)` 时再给出 `capacity`，液体从下往上，`gaseous: true` 的气体从上往下。布局支持源代码的 `contentPadding` 和 `flipLighterThanAir`。流体图标按每 16 个 GUI 像素平铺。默认数量单位为 L，实例使用 Forge 的毫桶显示时传 `state.useForgeFluidMillibuckets: true`。工具读取同步处理器的 `.controlsAmount(false)`，请求也可通过 `controlsAmount` 指定是否显示液量文字。
+- GT EV 四重输入仓装入 1,234 mB 熔融铁后，已用 2×、3× 实机截图核对完整流体槽和相邻空槽。比对包含原始动画条带的两个不同帧、材料色、右下角的 `1234L` 以及边框。另用 MUI2 原生绘制对照验证了部分填充的液体、气体、平铺与悬停高亮。
+- `tooltip` 接受游戏格式码字符串数组。报告 `widgets[].slot` 给出图标矩形、数量文字、悬停矩形。物品高亮覆盖 16×16，流体高亮覆盖控件四边内缩 1 像素的区域。`state.itemHoverOverlay: false` 对应关闭物品高亮的客户端，`state.showSlotOverlay: false` 对应隐藏已填槽位的自定义背景层。
+- 此入口绘制单层平面纹理。请求显式指定 `renderer` 时仅接受 `"flat"`。专用物品模型、3D 方块、多层效果、附魔光效、耐久条和拖拽状态需要独立渲染支持。参数内提供这类额外渲染声明会报错。
 
 ### 主机三录仪与 Waila
 
@@ -202,7 +351,7 @@ NEI 数量标签在一次命令调用中共享最多 512 个缓存项。相同�
 | --- | --- | --- |
 | item / multiblock | addInformation、ItemTooltipEvent、GT MultiblockTooltipBuilder、按键分支 | 物品、控制器和结构说明，Chromatic 与经典 NEI，标题和页脚 |
 | nei | handleTooltip、handleItemTooltip、配方输入输出、物品面板、书签 | 版块、分页、宽度与贴边位置。配方页从 Frontend 布局生成 |
-| mui1 / mui2 | Widget.addTooltip、tooltipBuilder / tooltipDynamic、RichTooltip | 文字、宽度与阴影。富文本 drawables 和事件装饰用原帧 |
+| mui1 / mui2 | Widget.addTooltip、tooltipBuilder / tooltipDynamic、RichTooltip | 文字、宽度与阴影。整份 MUI2 面板的源码工厂使用 `source=mui2` |
 | waila | getWailaHead / Body / Tail | HUD、多列、配置配色，可导入块图标。自定义渲染用原帧 |
 | scanner / chat | GT getInfoData / getExtraInfoData、BehaviourScanner | 另有 machine-scanner，用于主机自定义纯文本。已存报告支持分节与分页，聊天支持换行 |
 | text | Minecraft FontRenderer、Angelica 批处理字体、TST Style | 无边框文字和可复现的多色效果 |

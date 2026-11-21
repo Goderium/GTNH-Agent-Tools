@@ -419,10 +419,10 @@ globalThis.TooltipCore = (() => {
     }
     return {x, y, bx:x - 4, by:y - 4, w:width + 8, h:height + 8};
   }
-  function makePainter(context, scale, dx, dy, fontSettings) {
+  function makePainter(context, scale, dx, dy, fontSettings,floatLayer) {
     const width = context.canvas.width, height = context.canvas.height;
-    const image = context.getImageData(0, 0, width, height);
-    const pixels = image.data;
+    const image = floatLayer ? null : context.getImageData(0, 0, width, height);
+    const pixels = floatLayer ? new Float32Array(width*height*4) : image.data;
     const start = (logical, shift) => Math.ceil((logical - shift) * scale - 0.5);
     const toX = p => (p + 0.5) / scale + dx;
     const toY = p => (p + 0.5) / scale + dy;
@@ -446,6 +446,7 @@ globalThis.TooltipCore = (() => {
         }
       },
       quad(g, x, y, rgba, italic, cutoff = 25) {
+        if (floatLayer && fontSettings && g.unicode) g = {...g, sx:g.sx + 0.01, sy:g.sy + 0.01};
         const source = g.image;
         y += g.offsetY || 0;
         if (!source || g.w<=0 || g.h<=0) return;
@@ -454,7 +455,8 @@ globalThis.TooltipCore = (() => {
         const margin=points ? (fontSettings.aaMode===1 ? 6 : 8)*strength+0.5 : 0;
         const fu=g.sw/g.w*strength/scale*(1+(italic ? 2/g.h : 0));
         const fv=g.sh/g.h*strength/scale;
-        const brightness=fontSettings?.brightness ?? 0.5;
+        const userBrightness=fontSettings?.brightness ?? 0.5;
+        const brightness=floatLayer ? 0.625*userBrightness+0.1875 : userBrightness;
         const sample = (u,v) => {
           if (u<g.sx || v<g.sy || u>=g.sx+g.sw || v>=g.sy+g.sh) return 0;
           return source.data[(Math.floor(v)*source.width+Math.floor(u))*4+3]/255;
@@ -482,7 +484,13 @@ globalThis.TooltipCore = (() => {
           }
         }
       },
-      done() { context.putImageData(image, 0, 0); }
+      done() {
+        if(floatLayer) {
+          for(let i=0;i<pixels.length;i++)pixels[i]/=255;
+          return {width,height,floatPixels:pixels};
+        }
+        context.putImageData(image,0,0);
+      }
     };
   }
   function raster(canvas, layout, box, opts, assets) {
@@ -492,12 +500,15 @@ globalThis.TooltipCore = (() => {
     const width = Math.ceil(Math.max(1, cropped ? box.w : opts.width) * scale);
     const height = Math.ceil(Math.max(1, cropped ? box.h : opts.height) * scale);
     if (width > 8192 || height > 8192 || width*height > 16000000) throw new Error("画布太大，请缩小视口、缩放或内容行数。");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d", {willReadFrequently:true});
-    ctx.imageSmoothingEnabled = false;
+    let ctx;
+    if (!assets.painter) {
+      canvas.width = width;
+      canvas.height = height;
+      ctx = canvas.getContext("2d", {willReadFrequently:true});
+      ctx.imageSmoothingEnabled = false;
+    }
     const fontSettings=opts.fontMode==="modern" ? {...modernDefaults,...opts.fontSettings} : null;
-    const paint = makePainter(ctx, scale, dx, dy,fontSettings);
+    const paint = assets.painter ?? makePainter(ctx, scale, dx, dy,fontSettings,assets.rawPixels);
     const {kind, width:textWidth, height:textHeight} = layout;
     const theme = opts.colors || (kind === "waila"
       ? [0xcc33397f,0xcc33397f,0xcc4349bf,0xcc4349bf]
@@ -557,9 +568,11 @@ globalThis.TooltipCore = (() => {
               paint.quad(shape,x+shadow*n/fontSettings.boldCopies,y,rgb,glyph.o);
             }
           }
-          if (advance>0 && glyph.character!==" ") {
-            if (glyph.m) paint.rect(x-1,y+3,advance,1,[...rgb,255]);
-            if (glyph.n) paint.rect(x-1,y+8,advance,1,[...rgb,255]);
+          if (advance>0 && (assets.rawPixels || glyph.character!==" ")) {
+            // Angelica starts the decoration one pixel before the pen, and ends it at the advanced pen.
+            const span=advance+(assets.rawPixels ? 1 : 0);
+            if (glyph.m) paint.rect(x-1,y+3,span,1,[...rgb,255]);
+            if (glyph.n) paint.rect(x-1,y+8,span,1,[...rgb,255]);
           }
           x+=advance;
         }
@@ -588,6 +601,7 @@ globalThis.TooltipCore = (() => {
         }
       }
     }
+    if((assets.rawPixels||assets.painter) && !assets.fallback.length && kind==="text")return paint.done();
     paint.done();
     for (const {glyph, x, y, rgb} of assets.fallback) {
       ctx.fillStyle = "rgb(" + rgb.join(",") + ")";
@@ -599,5 +613,5 @@ globalThis.TooltipCore = (() => {
       ctx.drawImage(assets.icon,(box.bx+5-dx)*scale,(box.by+Math.floor((box.h-1)/2)-8-dy)*scale,16*scale,16*scale);
     }
   }
-  return {legacy, profiles, argb, modernDefaults, styledText, itemLines, parse, describe, prepare, measure, wrap, plan, planPositions, chromaticBounds, bounds, raster};
+  return {legacy, profiles, argb, modernDefaults, samples, styledText, itemLines, parse, describe, prepare, measure, wrap, plan, planPositions, chromaticBounds, bounds, raster};
 })();

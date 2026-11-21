@@ -441,6 +441,42 @@
   globalThis.GTNHTooltipWorkbench=Object.freeze({
     async run(request, files={}) {
       if (!request || typeof request!=="object") throw new Error("缺少 Agent 请求。");
+      if(["mui2-render","mui2-measure","mui2-font","mui2-bundle"].includes(request.source)) {
+        if(files.fonts?.length) await loadFonts(files.fonts);
+        const font=fonts.active,mode=request.fontMode??"modern";
+        const opts={...options(),fontMode:mode,amp:false,frame:Math.floor((request.timeMs??0)/100),time:request.timeMs??0};
+        if(files.fontConfig) opts.fontSettings=readFontSettings(await files.fontConfig.text());
+        if(request.source==="mui2-bundle") {
+          let bytes=0;
+          const archives=[];
+          for(const file of files.resources??[]) {
+            const zip=(await TooltipAssets.archive(file)).textureZip(request.textures);
+            if(zip.size===22)continue;
+            bytes+=zip.size;
+            if(bytes>64*1024**2)throw Error("Adjustable HTML exceeds 64 MiB of texture resources. Supply a ZIP containing the panel textures.");
+            archives.push(await new Promise((resolve,reject)=>{
+              const reader=new FileReader();reader.onload=()=>resolve(reader.result);
+              reader.onerror=()=>reject(reader.error);reader.readAsDataURL(zip);
+            }));
+          }
+          if(font)await font.ensurePages(request.texts);
+          return {archives,font:font?MuiDisplay.pack(font,request.texts,opts):null,opts};
+        }
+        const texts=request.source==="mui2-font"?request.texts:request.source==="mui2-measure"?[request.text]:request.scene.ops.filter(op=>op.type==="text").map(op=>op.text);
+        if(texts.length) {
+          if(!font || mode==="modern" && !font.modern?.size) throw Error("MUI2 text requires the selected game bitmap font.");
+          await font.ensurePages(texts);
+        }
+        if(request.source==="mui2-measure") return MuiText.measure(request.text,request.maxWidth,request.options,font,opts);
+        if(request.source==="mui2-font") return MuiDisplay.pack(font,texts,opts);
+        const canvas=await renderMui(request.scene,request.scale,files,op=>MuiText.draw(op,request.scale,font,opts));
+        let comparison=null;
+        if(files.reference && request.compare!==false) {
+          const image=await loadScreenshot(files.reference);
+          try {comparison=comparePixels(canvas,cropFrame(image,validatedCrop(request.crop,image)));} finally {image.close();}
+        }
+        return {source:"mui2",png:await toPng(canvas),comparison};
+      }
       if (request.source==="game-frame") {
         if (!files.reference) throw new Error("原帧模式需要游戏截图。");
         const img=await loadScreenshot(files.reference);

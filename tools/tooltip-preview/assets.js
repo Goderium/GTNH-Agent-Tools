@@ -8,7 +8,12 @@ globalThis.TooltipAssets = (() => {
   const modern = "assets/angelica/font/modern.json";
   const maxAsset = 4194304;
 
-  async function archive(file) {
+  const indexes = new WeakMap();
+  function archive(file) {
+    if (!indexes.has(file)) indexes.set(file, openArchive(file));
+    return indexes.get(file);
+  }
+  async function openArchive(file) {
     if (file.size < 22 || file.size > 1024 ** 3) throw new Error("JAR / ZIP 大小不受支持。");
     const tailStart = Math.max(0, file.size - 65557);
     const tail = new DataView(await file.slice(tailStart).arrayBuffer());
@@ -25,6 +30,7 @@ globalThis.TooltipAssets = (() => {
     }
     const directory = new DataView(await file.slice(offset,offset+size).arrayBuffer());
     const entries = new Map();
+    const localOffsets = [];
     let p = 0;
     for (let i = 0; i < count; i++) {
       if (p + 46 > size || directory.getUint32(p,true) !== 0x02014b50) throw new Error("ZIP 目录已损坏。");
@@ -32,19 +38,46 @@ globalThis.TooltipAssets = (() => {
       const next = p + 46 + nameLength + directory.getUint16(p+30,true) + directory.getUint16(p+32,true);
       if (next > size) throw new Error("ZIP 条目越界。");
       const nameBytes = new Uint8Array(directory.buffer,p+46,nameLength);
+      localOffsets.push(directory.getUint32(p+42,true));
       // Minecraft resource locations are ASCII. Skip unrelated byte sequences.
       if (nameBytes.every(b => b < 128)) {
         const name = decoder.decode(nameBytes);
         entries.set(name, {
           flags:directory.getUint16(p+8,true), method:directory.getUint16(p+10,true),
           compressed:directory.getUint32(p+20,true), length:directory.getUint32(p+24,true),
-          offset:directory.getUint32(p+42,true)
+          offset:directory.getUint32(p+42,true), record:[p,next]
         });
       }
       p = next;
     }
     return {
       has(name) { return entries.has(name); },
+      // Keep the original compressed PNG entries for branches only reached after an edit.
+      // Coalesce contiguous records so a large mod needs only a few Blob reads.
+      textureZip(selection) {
+        const paths=new Set(selection?.exact);
+        const ends=new Map(),sorted=[...localOffsets,offset].sort((a,b)=>a-b);
+        for(let i=1;i<sorted.length;i++)ends.set(sorted[i-1],sorted[i]);
+        const ranges=[],headers=[];
+        let length=0,centralSize=0;
+        for(const [name,entry] of entries) {
+          const match=/^assets\/[^/]+\/textures\/(.+)\.png$/.exec(name);
+          if(!match || selection && !paths.has(match[1]) && !selection.prefixes.some(p=>match[1].startsWith(p)))continue;
+          const start=entry.offset,end=ends.get(start);
+          if(end==null || end<=start || end>offset)throw Error("Invalid texture ZIP range.");
+          const header=new Uint8Array(directory.buffer.slice(...entry.record));
+          new DataView(header.buffer).setUint32(42,length,true);
+          headers.push(header);centralSize+=header.length;
+          if(ranges.at(-1)?.[1]===start)ranges.at(-1)[1]=end;
+          else ranges.push([start,end]);
+          length+=end-start;
+        }
+        const footer=new DataView(new ArrayBuffer(22));
+        footer.setUint32(0,0x06054b50,true);
+        footer.setUint16(8,headers.length,true);footer.setUint16(10,headers.length,true);
+        footer.setUint32(12,centralSize,true);footer.setUint32(16,length,true);
+        return new Blob([...ranges.map(([start,end])=>file.slice(start,end)),...headers,footer.buffer],{type:"application/zip"});
+      },
       async get(name) {
         const entry = entries.get(name);
         if (!entry) return null;
@@ -174,5 +207,5 @@ globalThis.TooltipAssets = (() => {
     };
     return result;
   }
-  return {load};
+  return {load,archive};
 })();

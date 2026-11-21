@@ -1,0 +1,9 @@
+{
+  "source": "mui2",
+  "java": {"file": "SliderPanel.java", "method": "create"},
+  "actions": [
+    {"id": "red", "type": "drag", "x": 80, "y": 4},
+    {"id": "mode", "type": "scroll", "direction": "up"}
+  ],
+  "scale": 3
+}

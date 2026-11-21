@@ -1,0 +1,13 @@
+{
+  "source": "mui2",
+  "java": {
+    "file": "SignalPanel.java",
+    "method": "create"
+  },
+  "state": {
+    "args": [
+      65
+    ]
+  },
+  "scale": 2
+}

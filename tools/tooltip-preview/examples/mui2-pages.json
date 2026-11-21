@@ -1,0 +1,5 @@
+{
+  "source": "mui2",
+  "java": {"file": "PagedPanel.java", "method": "create"},
+  "scale": 3
+}

@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { writeNeiScene } from "./nei-scene.mjs";
+import { renderMuiSource } from "./mui-preview.mjs";
 
 const help = "node agent.mjs (--request request.json --out output | --batch batch.json) [--report result.json] [--browser chrome.exe] [--java java.exe] [--require-exact]";
 const argNames = new Set(["--request","--batch","--out","--report","--browser","--java"]);
@@ -39,8 +40,8 @@ async function findBrowser(override) {
   throw Error("Chromium browser unavailable. Pass --browser with its executable path.");
 }
 
-async function attachedBrowser(exe,profile) {
-  const child=spawn(exe,["--headless=new","--disable-gpu","--disable-background-networking","--no-first-run",
+async function attachedBrowser(exe,profile,nativeGraphics) {
+  const child=spawn(exe,["--headless=new",...(nativeGraphics?[]:["--disable-gpu"]),"--disable-background-networking","--no-first-run",
     "--no-default-browser-check","--remote-debugging-port=0","--remote-debugging-address=127.0.0.1",
     "--user-data-dir="+profile,"about:blank"],{stdio:"ignore",windowsHide:true});
   try {
@@ -107,7 +108,8 @@ async function evaluate(call,expression) {
   return r.result.value;
 }
 
-const fileKeys=["fonts","language","reference","icon","fontConfig","wailaConfig"];
+const fileKeys=["fonts","language","resources","reference","icon","fontConfig","wailaConfig"];
+const multipleFiles=key=>["fonts","language","resources"].includes(key);
 async function findLanguage(source,java) {
   const locale=java.locale ?? "zh_CN";
   if(typeof locale!=="string" || !/^[a-zA-Z_]+$/.test(locale)) throw Error("Invalid locale.");
@@ -274,7 +276,7 @@ async function run(options,session) {
     if(v===undefined) continue;
     const array=Array.isArray(v) ? v : [v];
     if(array.length>24 || !array.every(item=>typeof item==="string" && item.length>0)) throw Error("Invalid file path list: "+key);
-    if(!["fonts","language"].includes(key) && array.length!==1) throw Error("Expected exactly one file: "+key);
+    if(!multipleFiles(key) && array.length!==1) throw Error("Expected exactly one file: "+key);
     files[key]=array.map(file=>path.resolve(base,file));
   }
   delete request.files;
@@ -293,6 +295,11 @@ async function run(options,session) {
   if(bridge) inputs.add(pathKey(bridge.file));
   if(inputs.has(pathKey(output)) || (report && (inputs.has(pathKey(report)) || pathKey(output)===pathKey(report)))) {
     throw Error("Output and report paths must be distinct from the input files.");
+  }
+  if(request.source==="mui2") {
+    session.nativeGraphics=true;
+    const language=files.language??(typeof request.java?.file==="string"?await findLanguage(path.resolve(base,request.java.file),request.java):[]);
+    return renderMuiSource(request,base,files,options,session,language);
   }
   if(request.source==="nei-scene") {
     if(files.reference || files.icon) throw Error("NEI manual scenes use textures in their layout and content.");
@@ -351,7 +358,7 @@ async function withWorkbench(options,work) {
       const exe=await findBrowser(options.browser);
       temp=await realpath(tmpdir());
       profile=await mkdtemp(path.join(temp,"gtnh-tip-"));
-      browser=await attachedBrowser(exe,profile);
+      browser=await attachedBrowser(exe,profile,session.nativeGraphics);
       session.browserLaunches++;
       call=connect(browser.socket);
     }
@@ -376,7 +383,7 @@ async function withWorkbench(options,work) {
     }
     function fileArguments(keys) {return keys.map(key=>{
       const expr="document.getElementById("+JSON.stringify("agent-"+key)+").files";
-      return key+":"+(["fonts","language"].includes(key) ? "Array.from("+expr+")" : expr+"[0]");
+      return key+":"+(multipleFiles(key) ? "Array.from("+expr+")" : expr+"[0]");
     }).join(",");}
     let selected=Object.keys(files);
     return task(async request=>{
@@ -425,7 +432,8 @@ async function checkBatchInputs(entries,destinations) {
     for(const file of Object.values(request.files ?? {}).flat()) input(file);
     input(request.capture);
     for(const key of ["file","recipeMap","frontend","gridHelper","uiDefaults"]) input(request.java?.[key]);
-    if(["java","machine"].includes(request.source) && request.java?.file && !request.files?.language) {
+    if(request.source==="mui2") for(const file of request.java?.sources??[]) input(file);
+    if(["java","machine","mui2"].includes(request.source) && request.java?.file && !request.files?.language) {
       for(const file of await findLanguage(path.resolve(base,request.java.file),request.java)) input(file);
     }
     if(request.source!=="nei-scene") continue;
@@ -469,6 +477,7 @@ async function runBatch(options,session) {
     reserve(job.report,index,false);
   }
   await checkBatchInputs(entries,destinations);
+  session.nativeGraphics=entries.some(job=>job.input.source==="mui2");
   const completed=[];
   let exitCode=0;
   for(const job of entries) {
