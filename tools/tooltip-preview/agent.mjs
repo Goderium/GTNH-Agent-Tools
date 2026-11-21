@@ -1,14 +1,14 @@
 
 import { execFile, spawn } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { writeNeiScene } from "./nei-scene.mjs";
 
-const help = "node agent.mjs --request request.json --out tooltip.png|scene.html|layout.json [--report result.json] [--browser chrome.exe] [--java java.exe] [--require-exact]";
-const argNames = new Set(["--request","--out","--report","--browser","--java"]);
+const help = "node agent.mjs (--request request.json --out output | --batch batch.json) [--report result.json] [--browser chrome.exe] [--java java.exe] [--require-exact]";
+const argNames = new Set(["--request","--batch","--out","--report","--browser","--java"]);
 function getArgs(args) {
   const options={};
   if (args.length===1 && args[0]==="--help") return null;
@@ -18,7 +18,7 @@ function getArgs(args) {
     if(!argNames.has(key) || !args[i+1] || args[i+1].startsWith("--")) throw Error("Invalid argument: "+key);
     options[key.slice(2)]=args[++i];
   }
-  if(!options.request || !options.out) throw Error(help);
+  if(options.batch ? options.request || options.out : !options.request || !options.out) throw Error(help);
   return options;
 }
 
@@ -256,11 +256,17 @@ async function fromBridge(request,base) {
   delete request.capture;
   return {file,observedRectangle:rect ?? null};
 }
-async function run(options) {
-  const requestPath=path.resolve(options.request), base=path.dirname(requestPath);
-  const input=await readFile(requestPath,"utf8");
+async function readRequest(file) {
+  const input=await readFile(file,"utf8");
   if(input.length>8000000) throw Error("Request JSON is too large.");
-  let request=JSON.parse(input.replace(/^\uFEFF/,""));
+  return JSON.parse(input.replace(/^\uFEFF/,""));
+}
+const pathKey=file=>process.platform==="win32" ? path.resolve(file).toLowerCase() : path.resolve(file);
+const serialize=data=>JSON.stringify(data,null,2)+"\n";
+
+async function run(options,session) {
+  const requestPath=path.resolve(options.request), base=path.dirname(requestPath);
+  let request=options.input ?? await readRequest(requestPath);
   if(request.source==="nei-layout") return exportNeiLayout(request,requestPath,options);
   const files={};
   for(const key of fileKeys) {
@@ -282,22 +288,25 @@ async function run(options) {
   const bridge=request.source==="bridge" || request.source==="nei-frame" || request.source==="game-frame" && request.capture
     ? await fromBridge(request,base) : null;
   const output=path.resolve(options.out), report=options.report ? path.resolve(options.report) : null;
-  const comparable=p=>process.platform==="win32" ? p.toLowerCase() : p;
-  const inputs=new Set([requestPath,...Object.values(files).flat()].map(comparable));
-  if(fromJava) inputs.add(comparable(fromJava.source));
-  if(bridge) inputs.add(comparable(bridge.file));
-  if(inputs.has(comparable(output)) || (report && (inputs.has(comparable(report)) || comparable(output)===comparable(report)))) {
+  const inputs=new Set([requestPath,...Object.values(files).flat()].map(pathKey));
+  if(fromJava) inputs.add(pathKey(fromJava.source));
+  if(bridge) inputs.add(pathKey(bridge.file));
+  if(inputs.has(pathKey(output)) || (report && (inputs.has(pathKey(report)) || pathKey(output)===pathKey(report)))) {
     throw Error("Output and report paths must be distinct from the input files.");
   }
   if(request.source==="nei-scene") {
     if(files.reference || files.icon) throw Error("NEI manual scenes use textures in their layout and content.");
-    return writeNeiScene(request,requestPath,options,jobs=>usingRenderer(files,options,async render=>{
-      const results=[];
-      for(const job of jobs) results.push(await render(job));
-      return results;
-    }));
+    // Keep resource order: later font packs and language files override earlier ones.
+    const resources=[];
+    for(const [key,paths] of Object.entries(files)) {
+      for(const file of paths) {
+        const {size,mtimeNs,ctimeNs}=await stat(file,{bigint:true});
+        resources.push([key,pathKey(file),String(size),String(mtimeNs),String(ctimeNs)]);
+      }
+    }
+    return writeNeiScene(request,requestPath,options,task=>session.render(files,task),session.quantityCache,resources);
   }
-  return usingRenderer(files,options,async render=>{
+  return session.render(files,async render=>{
     const result=await render(request);
     const {png,...metadata}=result;
     const html=machine && path.extname(output).toLowerCase()===".html";
@@ -307,11 +316,8 @@ async function run(options) {
         '<style>body{background:#191b1e}img{image-rendering:pixelated}</style><img alt="机器报告" src="data:image/png;base64,'+
         png+'"><script type="application/json" id="machine-report">'+data+'</script></html>\n');
     } else await writeFile(output,Buffer.from(png,"base64"));
-    const resultText=JSON.stringify({...metadata,source:machine ? "machine" : metadata.source,extraction:fromJava?.report,observedRectangle:bridge?.observedRectangle,
-      drawFrameId:bridge?.drawFrameId,drawIndices:bridge?.drawIndices,[html ? "htmlPath" : "pngPath"]:output},null,2)+"\n";
-    if(report) await writeFile(report,resultText,"utf8");
-    process.stdout.write(resultText);
-    if(options.exact && !metadata.comparison?.exact) process.exitCode=2;
+    return {...metadata,source:machine ? "machine" : metadata.source,extraction:fromJava?.report,observedRectangle:bridge?.observedRectangle,
+      drawFrameId:bridge?.drawFrameId,drawIndices:bridge?.drawIndices,[html ? "htmlPath" : "pngPath"]:output};
   });
 }
 
@@ -331,24 +337,32 @@ async function exportNeiLayout(request,requestPath,options) {
   const parser=fileURLToPath(new URL("SourceNeiLayout.java",import.meta.url));
   const {stdout}=await promisify(execFile)(options.java ?? "java",["-Dfile.encoding=UTF-8",parser,paths[0],field,...paths.slice(1)],
     {windowsHide:true,timeout:25000,maxBuffer:1000000,encoding:"utf8"});
-  const serialized=JSON.stringify(JSON.parse(stdout),null,2)+"\n";
-  await writeFile(output,serialized,"utf8");
-  process.stdout.write(serialized);
+  const layout=JSON.parse(stdout);
+  await writeFile(output,serialize(layout),"utf8");
+  return layout;
 }
 
-async function usingRenderer(files,options,task) {
-  const exe=await findBrowser(options.browser);
-  const temp=await realpath(tmpdir());
-  const profile=await mkdtemp(path.join(temp,"gtnh-tip-"));
-  let browser;
-  try {
-    browser=await attachedBrowser(exe,profile);
-    const call=connect(browser.socket);
-    await call("Page.navigate",{url:new URL("index.html",import.meta.url).href});
+async function withWorkbench(options,work) {
+  let browser,call,temp,profile;
+  let pageNumber=0;
+  const session={quantityCache:new Map(),browserLaunches:0,render};
+  async function render(files,task) {
+    if(!browser) {
+      const exe=await findBrowser(options.browser);
+      temp=await realpath(tmpdir());
+      profile=await mkdtemp(path.join(temp,"gtnh-tip-"));
+      browser=await attachedBrowser(exe,profile);
+      session.browserLaunches++;
+      call=connect(browser.socket);
+    }
+    // Each top-level request starts with the same UI and font state as a standalone run.
+    const page=new URL("index.html",import.meta.url);
+    page.searchParams.set("request",String(++pageNumber));
+    await call("Page.navigate",{url:page.href});
     const expires=Date.now()+12000;
     let ready=false;
     while(Date.now()<expires) {
-      try {ready=await evaluate(call,"typeof GTNHTooltipWorkbench === 'object'");} catch {}
+      try {ready=await evaluate(call,"location.href==="+JSON.stringify(page.href)+" && typeof GTNHTooltipWorkbench === 'object'");} catch {}
       if(ready) break;
       await new Promise(resolve=>setTimeout(resolve,80));
     }
@@ -365,21 +379,23 @@ async function usingRenderer(files,options,task) {
       return key+":"+(["fonts","language"].includes(key) ? "Array.from("+expr+")" : expr+"[0]");
     }).join(",");}
     let selected=Object.keys(files);
-    const result=await task(async request=>{
+    return task(async request=>{
       const rendered=await evaluate(call,"GTNHTooltipWorkbench.run("+JSON.stringify(request)+",{"+fileArguments(selected)+"})");
       selected=selected.filter(key=>key!=="fonts" && key!=="language");
       return rendered;
     });
-    try {await call("Browser.close");} catch {}
-    return result;
+  }
+  try {
+    return await work(session);
   } finally {
     if(browser) {
+      try {await call("Browser.close");} catch {}
       browser.socket.close();
       if(browser.child.exitCode===null) browser.child.kill();
     }
     try {
-      const resolved=await realpath(profile);
-      if(path.dirname(resolved)===temp && /^gtnh-tip-[\w-]+$/.test(path.basename(resolved))) {
+      const resolved=profile && await realpath(profile);
+      if(resolved && path.dirname(resolved)===temp && /^gtnh-tip-[\w-]+$/.test(path.basename(resolved))) {
         await rm(resolved,{recursive:true,force:true,maxRetries:5,retryDelay:150});
       }
     } catch(e) {
@@ -388,9 +404,97 @@ async function usingRenderer(files,options,task) {
   }
 }
 
+async function runJob(options,session) {
+  const result=await run(options,session);
+  if(options.report) await writeFile(options.report,serialize(result),"utf8");
+  return {result,exitCode:options.exact && !result.comparison?.exact ? 2 : 0};
+}
+
+// Check the whole manifest before writing. A previous output can feed a later request.
+async function checkBatchInputs(entries,destinations) {
+  for(const [index,job] of entries.entries()) {
+    const base=path.dirname(job.request);
+    const request=job.input=await readRequest(job.request);
+    function input(file,root=base) {
+      if(typeof file!=="string" || !file) return;
+      const resolved=path.resolve(root,file);
+      const writer=destinations.get(pathKey(resolved));
+      if(writer && (!writer.output || writer.index>=index)) throw Error("Batch destination conflicts with input: "+resolved);
+      return resolved;
+    }
+    for(const file of Object.values(request.files ?? {}).flat()) input(file);
+    input(request.capture);
+    for(const key of ["file","recipeMap","frontend","gridHelper","uiDefaults"]) input(request.java?.[key]);
+    if(["java","machine"].includes(request.source) && request.java?.file && !request.files?.language) {
+      for(const file of await findLanguage(path.resolve(base,request.java.file),request.java)) input(file);
+    }
+    if(request.source!=="nei-scene") continue;
+    for(const scene of request.scenes ?? []) {
+      input(scene.layout);
+      for(const file of Object.values(scene.textures ?? {})) input(file);
+      const contentFile=input(scene.content);
+      // Material textures are relative to the manual content document.
+      const content=contentFile ? await readRequest(contentFile) : scene.content;
+      const root=contentFile ? path.dirname(contentFile) : base;
+      for(const slot of Object.values(content?.slots ?? {})) input(slot?.icon,root);
+    }
+  }
+}
+
+async function runBatch(options,session) {
+  const manifest=path.resolve(options.batch),base=path.dirname(manifest);
+  const {jobs}=await readRequest(manifest);
+  if(!Array.isArray(jobs) || !jobs.length) throw Error("Batch requires a non-empty jobs array.");
+  function resolve(file) {
+    if(typeof file!=="string" || !file.trim()) throw Error("Batch paths must be non-empty strings.");
+    return path.resolve(base,file);
+  }
+  const entries=jobs.map(job=>{
+    if(!job || Object.keys(job).some(k=>!["request","out","report","requireExact"].includes(k)) ||
+      (job.requireExact!==undefined && typeof job.requireExact!=="boolean")) throw Error("Invalid batch job.");
+    return {request:resolve(job.request),out:resolve(job.out),report:job.report===undefined ? undefined : resolve(job.report),
+      exact:options.exact || job.requireExact,java:options.java};
+  });
+  const inputs=new Set([manifest,...entries.map(job=>job.request)].map(pathKey));
+  const destinations=new Map();
+  function reserve(file,index,output) {
+    if(!file) return;
+    const key=pathKey(file);
+    if(inputs.has(key) || destinations.has(key)) throw Error("Conflicting batch output or report path: "+file);
+    destinations.set(key,{index,output});
+  }
+  reserve(options.report,-1,false);
+  for(const [index,job] of entries.entries()) {
+    reserve(job.out,index,true);
+    reserve(job.report,index,false);
+  }
+  await checkBatchInputs(entries,destinations);
+  const completed=[];
+  let exitCode=0;
+  for(const job of entries) {
+    const {request,out,report}=job;
+    try {
+      const executed=await runJob(job,session);
+      completed.push({request,out,report,exitCode:executed.exitCode,quantityLabels:executed.result.quantityLabels});
+      if(executed.exitCode!==0) exitCode=executed.exitCode;
+    } catch(error) {
+      completed.push({request,out,report,exitCode:1,error:error.message});
+      exitCode=1;
+      break;
+    }
+  }
+  const result={source:"batch",exitCode,browserLaunches:session.browserLaunches,skipped:entries.length-completed.length,jobs:completed};
+  if(options.report) await writeFile(options.report,serialize(result),"utf8");
+  return {result,exitCode};
+}
+
 try {
   const options=getArgs(process.argv.slice(2));
-  if(options) await run(options);
+  if(options) {
+    const {result,exitCode}=await withWorkbench(options,session=>options.batch ? runBatch(options,session) : runJob(options,session));
+    process.stdout.write(serialize(result));
+    process.exitCode=exitCode;
+  }
   else console.log(help);
 } catch(e) {
   process.stderr.write(e.message+"\n");

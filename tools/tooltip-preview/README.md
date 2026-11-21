@@ -27,6 +27,25 @@ JSON 文件相对自身目录解析输入路径。可用 --browser 指定 Chromi
 
 对话预览直接使用透明 PNG，保留 Tooltip 自身的配色和边框。HTML 的主预览和导出 PNG 只包含 Tooltip 图层。
 
+### 批量请求
+
+用 `--batch` 传入清单，一次调用可混合生成 NEI 配方页、物品 Tooltip、三录仪和 Waila 预览。清单中的路径相对于清单，每份请求里的资源路径仍相对于该请求。以下清单会生成一张配方页和一张 Waila 图。
+
+```json
+{
+  "jobs": [
+    { "request": "requests/recipe.json", "out": "recipe.html", "report": "recipe-report.json" },
+    { "request": "requests/waila.json", "out": "waila.png" }
+  ]
+}
+```
+
+```powershell
+node .\agent.mjs --batch batch.json --report batch-report.json
+```
+
+任务按清单顺序运行，可以先导出布局，再由后续配方页读取。整个批次按需启动一个浏览器，每份请求使用独立页面状态。每项可用 `report` 保存原有的完整报告，用 `requireExact: true` 要求该项通过像素对照。批次的标准输出和可选的 `--report` 是同一份 JSON，包含逐项退出码、浏览器启动次数和跳过的任务数。清单或输入路径冲突在执行前报错。运行中遇到错误时保留已有输出，停止后续任务并返回 1。仅像素对照未通过时继续执行，批次返回 2。
+
 ### Java 源码
 
 ```json
@@ -174,6 +193,8 @@ node .\agent.mjs --request scene.json --out recipe.html --report scene-report.js
 ```
 
 `layout` 和 `content` 可用内联对象或 JSON 文件路径。槽位 PNG 相对于内容所在文件解析。布局装饰的 PNG 通过 `textures` 关联装饰 ID，路径相对于请求文件。Agent 可调用 `GTNHNeiScene.select(id)`、`GTNHNeiScene.hover(slotId)`、`GTNHNeiScene.state()` 和 `await GTNHNeiScene.panelPng()`。报告提供槽位坐标和填充状态。
+
+NEI 数量标签在一次命令调用中共享最多 512 个缓存项。相同文字、绘制参数和资源版本复用同一张字形位图，物品和流体仍各自计算槽内缩放。更换字体资源或配置、字体模式、GUI 缩放时会重新绘制，带 `§k` 扰码的标签每次绘制。配方报告和批次摘要的 `quantityLabels` 分别用 `requested`、`rendered`、`hits` 记录槽位请求数、实际绘制次数和缓存命中次数。
 
 ## 场景
 

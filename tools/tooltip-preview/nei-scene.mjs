@@ -46,7 +46,7 @@ function readLayout(data) {
   return layout;
 }
 
-export async function writeNeiScene(request,requestPath,options,render) {
+export async function writeNeiScene(request,requestPath,options,withRenderer,quantityCache,resources) {
   const {viewport,scenes}=request;
   if(!inRange(viewport?.width,40,1920) || !inRange(viewport.height,40,1080) ||
     !inRange(viewport.scale,1,4)) throw Error("NEI scene requires a logical viewport and integer GUI scale.");
@@ -80,20 +80,20 @@ export async function writeNeiScene(request,requestPath,options,render) {
       !inRange(png.readUInt32BE(16),1,512) || !inRange(png.readUInt32BE(20),1,512)) throw Error("Invalid NEI texture: "+file);
     return imageUrl(png);
   }
-  const jobs=[], finish=[];
+  const jobs=[];
+  const quantityLabels={requested:0,rendered:0,hits:0};
   const settings={...viewport,"font-mode":request.fontMode ?? "modern",amp:false,screen:false};
-  function add(job,apply) {
-    jobs.push({source:"editable",strict:true,...job});
-    finish.push(result=>apply(result,imageUrl(Buffer.from(result.png,"base64"))));
+  function add(job,apply,quantity=false) {
+    jobs.push({request:{source:"editable",strict:true,...job},apply,quantity});
   }
-  function glyphs(lines,width,color,shadow,apply) {
+  function glyphs(lines,width,color,shadow,apply,quantity=false) {
     const height=lines.length*10;
     add({profile:"text",settings,lines,drawRegion:{width,height},draws:lines.map((_,i)=>({x:0,y:i*10,color,shadow}))},
       ({rows},image)=>{
         const w=Math.max(...rows.map(row=>row.width))+(shadow ? 1 : 0);
         if(w>width) throw Error("NEI text exceeds the layout width: "+lines.join(" / "));
         apply({image,width:w,height});
-      });
+      },quantity);
   }
   const compiled=[], sceneIds=new Set();
   for(const scene of scenes) {
@@ -140,7 +140,7 @@ export async function writeNeiScene(request,requestPath,options,render) {
       if(quantity) glyphs([quantity],128,0xffffff,true,stamp=>{
         const ratio=kind==="fluid" ? 0.5 : quantity.length>=3 ? 0.8 : 1;
         slot.quantity={...stamp,ratio:Math.min(ratio,cell.width/stamp.width)};
-      });
+      },true);
       add({profile:"nei",settings:{...settings,skin:"chromatic",wrap:viewport.width-16,paginate:false},
         lines:["@title "+name,"@body",...tooltip]},({box,renderer},image)=>{
         if(renderer!=="chromatic" || box.w>viewport.width-4 || box.h>Math.max(height+y,viewport.height)-4) {
@@ -151,8 +151,28 @@ export async function writeNeiScene(request,requestPath,options,render) {
     }
     compiled.push(page);
   }
-  const results=await render(jobs);
-  results.forEach((result,i)=>finish[i](result));
+  async function renderQuantity(label,render) {
+    quantityLabels.requested++;
+    // Obfuscated glyphs can depend on the current animation frame.
+    const key=/§k/i.test(label.lines[0]) ? null : JSON.stringify([resources,label]);
+    if(quantityCache.has(key)) {
+      quantityLabels.hits++;
+      return quantityCache.get(key);
+    }
+    const result=await render(label);
+    quantityLabels.rendered++;
+    if(key!==null) {
+      if(quantityCache.size>=512) quantityCache.delete(quantityCache.keys().next().value);
+      quantityCache.set(key,result);
+    }
+    return result;
+  }
+  await withRenderer(async render=>{
+    for(const job of jobs) {
+      const result=job.quantity ? await renderQuantity(job.request,render) : await render(job.request);
+      job.apply(result,imageUrl(Buffer.from(result.png,"base64")));
+    }
+  });
   const renderer=await readFile(new URL("renderer.js",import.meta.url),"utf8");
   const pages=JSON.stringify({viewport,scenes:compiled,headerHeight}).replaceAll("<","\\u003c");
   const stage='<div id="stage" aria-label="NEI 配方窗口"><canvas id="panel"></canvas><div id="slots"></div><img id="tip" alt="" hidden></div>';
@@ -161,7 +181,7 @@ export async function writeNeiScene(request,requestPath,options,render) {
     '<title>GTNH NEI 配方预览</title><style>'+css+'</style><main>'+stage+nav+'</main>' +
     '<script id="scene-data" type="application/json">'+pages+'</script><script>'+renderer+'</script><script>('+
     mount.toString()+')('+buildCells.toString()+')</script></html>\n';
-  const metadata={source:"nei-scene",htmlPath:output,viewport,scenes:compiled.map(page=>{
+  const metadata={source:"nei-scene",htmlPath:output,viewport,quantityLabels,scenes:compiled.map(page=>{
     const cells=buildCells(page.layout);
     return {id:page.id,title:page.title,panelHeight:page.height,bodyWidth:page.layout.width,bodyHeight:page.layout.height,
       decorations:page.layout.decorations.map(({id,x,y,width,height})=>({id,x,y,width,height,hasTexture:Object.hasOwn(page.textures,id)})),
@@ -170,9 +190,7 @@ export async function writeNeiScene(request,requestPath,options,render) {
       }))};
   })};
   await writeFile(output,html,"utf8");
-  const serialized=JSON.stringify(metadata,null,2)+"\n";
-  if(report) await writeFile(report,serialized,"utf8");
-  process.stdout.write(serialized);
+  return metadata;
 }
 
 const css=
