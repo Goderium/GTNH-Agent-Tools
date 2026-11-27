@@ -85,6 +85,10 @@ node .\agent.mjs --batch batch.json --report batch-report.json
 
 ### MUI2 面板与绘制
 
+用 `java -version` 检查解析器默认使用的 Java。若源码使用 Java 22 的未命名 lambda 参数 `_`（例如 GT 5.09.54.277 的 `GTWidgetThemes.java`），用 `--java` 指向 JDK 22 或更新版本的 `bin/java`，例如 JDK 25。此参数用于离线解析源码，游戏实例仍使用自己的 Java。
+
+`ButtonWidget.panelCloseButton()` 读取 `GuiTextures.CROSS_TINY` 和当前主题的关闭按钮配置。鼠标左键或右键会在预览中关闭所属的 `ModularPanel`，独立 HTML 中可用 `GTNHMuiScene.reset()` 恢复起始状态。要替换叉号纹理或主题，可沿用源码的 `overlay` 或 `widgetTheme`。
+
 用 `source=mui2` 直接解释面板工厂或 drawable 的 Java 语法树。提供与目标客户端匹配的 MUI2 和模组源码。JDK 解析语法树，浏览器用 WebGL 绘制。逐像素比对时使用硬件图形加速；Angelica 抗锯齿还需要片元导数。随附的信号面板只绘制矩形，可以用 Node.js、Chromium 或 Edge 及支持目标语法的 JDK 独立运行。[请求](examples/mui2-panel.json) · [面板源码](examples/SignalPanel.java)
 
 ```powershell

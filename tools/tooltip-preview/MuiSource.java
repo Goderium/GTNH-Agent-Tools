@@ -157,8 +157,15 @@ class MuiSource {
                     source.collect(type,name,classes);
                 }
             }
-            for (var diagnostic : diagnostics.getDiagnostics()) if (diagnostic.getKind()==Diagnostic.Kind.ERROR)
-                throw new IllegalArgumentException(diagnostic.toString());
+            for (var diagnostic : diagnostics.getDiagnostics()) {
+                if (diagnostic.getKind()!=Diagnostic.Kind.ERROR) continue;
+                String hint = "";
+                if (Runtime.version().feature() < 22 && diagnostic.getCode().contains("underscore.as.identifier")) {
+                    hint = "\nJava " + Runtime.version().feature() + " cannot parse unnamed lambda parameters. "
+                        + "Pass --java <path to JDK 22 or newer>/bin/java (for example JDK 25).";
+                }
+                throw new IllegalArgumentException(diagnostic.toString() + hint);
+            }
             System.out.println(json(classes));
         }
     }

@@ -182,6 +182,7 @@ export function programTextures(program, scene) {
         const receiver=a[0]==="MEMBER_SELECT"?a[2]:null;
         if(receiver)visit(receiver);
         const args=b.map(visit),q=qualified(receiver),type=q==="this"?owner:env.get("#"+q)??q;
+        if(type==="ButtonWidget" && key==="panelCloseButton/0")field("GuiTextures","CROSS_TINY");
         const sources=receiver?[member(type,"methods",key)].filter(Boolean):owners(owner,"methods",key,name);
         if(receiver && q!=="this" && !Object.hasOwn(classes,q) && !["location","fullImage"].includes(name))
           for(const candidate of Object.keys(classes))if(!sources.includes(candidate) && Object.hasOwn(classes[candidate].methods,key))sources.push(candidate);

@@ -514,7 +514,12 @@ export function readMuiScene(classes, request, measure) {
       obj.controlsAmount=a;return obj;
     }
     if(full==="ItemSlot.create" && args.length===1 && a===false)return widget("ItemSlot");
-    if(java.adapters?.[full+"/"+args.length] || memberOwner(key,"methods",name+"/"+args.length))return method(key,name,args);
+    if(java.adapters?.[full+"/"+args.length])return method(key,name,args);
+    if(full==="ButtonWidget.panelCloseButton" && !args.length){
+      return {...widget("ButtonWidget"),themeId:"IThemeApi.CLOSE_BUTTON",y:4,right:4,
+        overlay:[field("GuiTextures","CROSS_TINY")],closePanel:true};
+    }
+    if(memberOwner(key,"methods",name+"/"+args.length))return method(key,name,args);
     if(Object.hasOwn(state.bindings ?? {},full) && !args.length) return state.bindings[full];
     if(obj===activeSkin && !args.length) {
       const styleKey={getColor:"color",getTextColor:"textColor",getIconColor:"iconColor",getTextShadow:"textShadow"}[name];
@@ -769,12 +774,14 @@ export function readMuiScene(classes, request, measure) {
     usedIds.add(id);
     return id;
   }
-  function indexWidgets(w) {
+  function indexWidgets(w,panelId) {
     if(w?.type!=="widget")return;
     const id=documentationId(w);widgetIds.set(w,id);
+    if(w.widget==="ModularPanel")panelId=id;
+    if(w.closePanel)w.ownerPanel=panelId;
     if(w.widget==="PagedWidget")initializePager(w,id,readValue);
     if(["ItemSlot","FluidSlot"].includes(w.widget))slotIds.add(id);
-    w.children.forEach(indexWidgets);
+    w.children.forEach(child=>indexWidgets(child,panelId));
   }
   function skinFor(w) {
     if(w.themeId && !Object.hasOwn(theme,w.themeId))throw Error("Missing widget theme "+w.themeId);
@@ -886,6 +893,10 @@ export function readMuiScene(classes, request, measure) {
   }
   function controlFor(w,selected) {
     if(w.customInteraction || w.onMouseReleased)return null;
+    if(w.closePanel && !w.onMousePressed){
+      if(!w.ownerPanel)throw Error("panelCloseButton requires a containing ModularPanel.");
+      return {kind:"choice",target:{group:"bindings",key:"$closedPanel."+w.ownerPanel},value:false,choice:true,enabled:true};
+    }
     if(w.widget==="ButtonWidget")return pressControl(w.onMousePressed)??sourcePress(w);
     if(w.onMousePressed)return null;
     const target=targetOf(w.value);
@@ -1104,6 +1115,7 @@ export function readMuiScene(classes, request, measure) {
   function layout(w,box,enabled=enabledValue(w),parentId) {
     if(w?.type!=="widget") throw Error("Expected a widget child.");
     const [x,y,width,height]=box,[pl,pt,pr,pb]=w.padding, id=widgetIds.get(w)??documentationId(w);
+    if(w.widget==="ModularPanel" && state.bindings?.["$closedPanel."+id]===true)enabled=false;
     if(typeof enabled!=="boolean")throw Error("Unresolved enabled condition for "+id);
     if(!enabled){widgets.push({id,type:w.widget,box,visible:false,enabled:false,hoverable:false,tooltip:[]});return;}
     const hover=!w.invisiblePanel && state.hover===id,skin=skinFor(w);
